@@ -13,7 +13,7 @@ employees, suppliers and budget. Built for PAP521S Programming in Practice.
 | Gabriela Ribeiro.  |   226166295    |  22GabrielaRibeiro
 | Udenifindano Kafidi|   226021084    |  SerpentineVI
 | Jasmine Kibble     |   226079201    |  Jasmine55502
-| Nandu Mbindi       |   226166651    |  
+| Nandu Mbindi       |   226166651    |  226166651nandu
 
 ## What the program does
 
