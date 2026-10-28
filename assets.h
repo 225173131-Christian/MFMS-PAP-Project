@@ -3,6 +3,8 @@
 
 /* Asset Management module - MFMS Project A */
 
+#define MAX_ASSETS 100
+
 void   assetMenu(void);            /* sub-menu: call this from main menu option 4 */
 void   addAsset(void);
 void   displayAssets(void);
