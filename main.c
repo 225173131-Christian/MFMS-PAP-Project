@@ -13,11 +13,7 @@
  * live here in main.c instead.
  */
 
-#include <ctype.h>
-#include <errno.h>
-#include <limits.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include "assets.h"
@@ -26,150 +22,91 @@
 #include "reports.h"
 #include "supplier_management.h"
 
-/*
- * Read a menu number as a complete line. Returns 1 on success, 0 for invalid
- * input, and -1 on end-of-file. This avoids scanf leaving bad input behind.
- */
-static int readMenuChoice(const char *prompt, int *choice)
+static int readChoice(const char *prompt)
 {
-    char line[128];
-    char *end;
-    long value;
-    int ch;
+    char line[64];
+    char extra;
+    int choice;
 
     printf("%s", prompt);
-    if (fgets(line, sizeof(line), stdin) == NULL) {
+    if (fgets(line, sizeof(line), stdin) == NULL) return -2;
+    if (strchr(line, '\n') == NULL && !feof(stdin)) {
+        int ch;
+        while ((ch = getchar()) != '\n' && ch != EOF) {
+            /* Clear the rest of the line. */
+        }
         return -1;
     }
-
-    if (strchr(line, '\n') == NULL && !feof(stdin)) {
-        while ((ch = getchar()) != '\n' && ch != EOF) {
-            /* discard the rest of the overlong line */
-        }
-        printf("Invalid input. Please enter a whole number.\n");
-        return 0;
-    }
-
-    errno = 0;
-    value = strtol(line, &end, 10);
-    if (end == line || errno == ERANGE || value < INT_MIN || value > INT_MAX) {
-        printf("Invalid input. Please enter a whole number.\n");
-        return 0;
-    }
-    while (isspace((unsigned char)*end)) {
-        end++;
-    }
-    if (*end != '\0') {
-        printf("Invalid input. Please enter a whole number.\n");
-        return 0;
-    }
-
-    *choice = (int)value;
-    return 1;
+    if (sscanf(line, "%d %c", &choice, &extra) != 1) return -1;
+    return choice;
 }
 
-static void budgetManagementMenu(void)
+static void budgetMenu(void)
 {
     int choice;
-    int status;
 
-    for (;;) {
-        printf("\n--- BUDGET MANAGEMENT ---\n");
-        printf("1. Enter Departmental Budget\n");
-        printf("2. Enter Expenditure\n");
-        printf("3. Display Budgets\n");
-        printf("4. Generate Budget Report\n");
-        printf("5. Back to Main Menu\n");
-
-        status = readMenuChoice("Enter your choice: ", &choice);
-        if (status < 0) {
-            return;
-        }
-        if (status == 0) {
-            continue;
-        }
+    do {
+        printf("\n--- Budget Management ---\n");
+        printf("1. Add department budget\n2. Enter expenditure\n");
+        printf("3. Display budgets\n4. Budget report\n5. Back\n");
+        choice = readChoice("Choose: ");
 
         switch (choice) {
             case 1: addBudget(); break;
             case 2: enterExpenditure(); break;
             case 3: displayBudgets(); break;
             case 4: generateReport(); break;
-            case 5: return;
-            default: printf("Invalid choice. Please select 1-5.\n");
+            case 5: break;
+            case -2: return;
+            default: printf("Invalid choice.\n");
         }
-    }
+    } while (choice != 5);
 }
 
 static void reportsMenu(void)
 {
     int choice;
-    int status;
 
-    for (;;) {
-        printf("\n--- REPORTS ---\n");
-        printf("1. Employee Report\n");
-        printf("2. Budget Report\n");
-        printf("3. Supplier Report\n");
-        printf("4. Asset Report\n");
-        printf("5. Back to Main Menu\n");
-
-        status = readMenuChoice("Enter your choice: ", &choice);
-        if (status < 0) {
-            return;
-        }
-        if (status == 0) {
-            continue;
-        }
+    do {
+        printf("\n--- Reports ---\n");
+        printf("1. Employees\n2. Budget\n3. Suppliers\n4. Assets\n5. Back\n");
+        choice = readChoice("Choose: ");
 
         switch (choice) {
             case 1: employeeReport(); break;
             case 2: budgetReport(); break;
             case 3: supplierReport(); break;
             case 4: assetReport(); break;
-            case 5: return;
-            default: printf("Invalid choice. Please select 1-5.\n");
+            case 5: break;
+            case -2: return;
+            default: printf("Invalid choice.\n");
         }
-    }
+    } while (choice != 5);
 }
 
 int main(void)
 {
     int choice;
-    int status;
 
-    for (;;) {
-        printf("\n========================================\n");
-        printf("MUNICIPAL FINANCIAL MANAGEMENT SYSTEM\n");
-        printf("========================================\n");
-        printf("1. Employee Management\n");
-        printf("2. Budget Management\n");
-        printf("3. Supplier Management\n");
-        printf("4. Asset Management\n");
-        printf("5. Reports\n");
-        printf("6. Exit\n");
-
-        status = readMenuChoice("Enter your choice: ", &choice);
-        if (status < 0) {
-            printf("\nInput ended. Exiting system.\n");
-            break;
-        }
-        if (status == 0) {
-            continue;
-        }
+    do {
+        printf("\n--- Municipal Financial Management System ---\n");
+        printf("1. Employee management\n2. Budget management\n");
+        printf("3. Supplier management\n4. Asset management\n");
+        printf("5. Reports\n6. Exit\n");
+        choice = readChoice("Choose: ");
 
         switch (choice) {
             case 1: employeeMenu(); break;
-            case 2: budgetManagementMenu(); break;
+            case 2: budgetMenu(); break;
             case 3: supplierMenu(); break;
             case 4: assetMenu(); break;
             case 5: reportsMenu(); break;
-            case 6:
-                printf("Exiting system. Goodbye!\n");
-                return 0;
-            default:
-                printf("Invalid choice. Please select 1-6.\n");
+            case 6: printf("Goodbye.\n"); break;
+            case -2: return 0;
+            default: printf("Invalid choice.\n");
         }
-    }
+    } while (choice != 6);
 
     return 0;
 }
+
