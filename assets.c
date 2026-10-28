@@ -5,301 +5,145 @@
  * Data is stored in parallel arrays: index i refers to the same asset
  * in every array.
  */
-
+#include <ctype.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
-#include <stdlib.h>
-#include <ctype.h>
-#include <errno.h>
-#include <limits.h>
-#include <math.h>
+
 #include "assets.h"
 
-#define NAME_LEN   50
-#define INPUT_LEN  100
+#define TEXT_SIZE 50
 
-/* ---------- Storage (parallel arrays) ---------- */
-static int    assetId[MAX_ASSETS];
-static char   assetName[MAX_ASSETS][NAME_LEN];
-static char   assetType[MAX_ASSETS][NAME_LEN];
-static double assetValue[MAX_ASSETS];
-static char   assetDept[MAX_ASSETS][NAME_LEN];
-static char   assetCondition[MAX_ASSETS][NAME_LEN];
-static int    assetCount = 0;
-static int    inputEnded = 0;
-static int    lineTooLong = 0;
+static int assetIds[MAX_ASSETS];
+static char assetNames[MAX_ASSETS][TEXT_SIZE];
+static char assetTypes[MAX_ASSETS][TEXT_SIZE];
+static double assetValues[MAX_ASSETS];
+static char assetDepartments[MAX_ASSETS][TEXT_SIZE];
+static char assetConditions[MAX_ASSETS][TEXT_SIZE];
+static int assetCount = 0;
 
-/* ---------- Private helper prototypes ---------- */
-static void   readLine(const char *prompt, char *buffer, int size);
-static void   readText(const char *prompt, char *dest, int size);
-static int    readInt(const char *prompt);
-static double readPositiveDouble(const char *prompt);
-static void   toLowerCase(const char *src, char *dest, int size);
-static int    containsIgnoreCase(const char *text, const char *term);
-static int    equalsIgnoreCase(const char *a, const char *b);
-static void   chooseType(char *dest);
-static void   chooseCondition(char *dest);
-static void   printAssetHeader(void);
-static void   printAssetRow(int i);
-
-/* =====================================================
- *  INPUT HELPERS
- * ===================================================== */
-
-/* Reads one line safely with fgets and removes the newline. */
-static void readLine(const char *prompt, char *buffer, int size)
+static int readLine(const char *prompt, char *text, int size)
 {
-    int len;
+    size_t length;
     int ch;
 
-    lineTooLong = 0;
     printf("%s", prompt);
-    if (fgets(buffer, size, stdin) == NULL) {
-        buffer[0] = '\0';
-        inputEnded = 1;
-        return;
-    }
+    if (fgets(text, size, stdin) == NULL) return 0;
 
-    len = (int)strlen(buffer);
-    if (len > 0 && buffer[len - 1] == '\n') {
-        buffer[len - 1] = '\0';
+    length = strlen(text);
+    if (length > 0 && text[length - 1] == '\n') {
+        text[length - 1] = '\0';
     } else if (!feof(stdin)) {
-        /* line was longer than the buffer: discard the leftovers */
         while ((ch = getchar()) != '\n' && ch != EOF) {
-            /* discard */
+            /* Clear the rest of the line. */
         }
-        lineTooLong = 1;
-        printf("  Error: input is too long; please try again.\n");
+        printf("Input is too long. Try again.\n");
+        return -1;
     }
+    return 1;
 }
 
-/* Keeps asking until the user types a non-empty text (no empty names). */
-static void readText(const char *prompt, char *dest, int size)
+static int readText(const char *prompt, char *answer, int size)
 {
-    char buffer[INPUT_LEN];
-    int  start;
+    char line[128];
+    char *start;
+    size_t length;
+    int result;
 
     while (1) {
-        readLine(prompt, buffer, INPUT_LEN);
-        if (inputEnded) {
-            return;
-        }
-        if (lineTooLong) {
-            continue;
+        result = readLine(prompt, line, sizeof(line));
+        if (result == 0) return 0;
+        if (result < 0) continue;
+
+        start = line;
+        while (isspace((unsigned char)*start)) start++;
+        length = strlen(start);
+        while (length > 0 && isspace((unsigned char)start[length - 1])) {
+            start[--length] = '\0';
         }
 
-        /* skip leading spaces */
-        start = 0;
-        while (buffer[start] == ' ' || buffer[start] == '\t') {
-            start++;
-        }
-
-        if (strlen(buffer + start) == 0) {
-            printf("  Error: this field cannot be empty.\n");
-        } else if ((int)strlen(buffer + start) >= size) {
-            printf("  Error: maximum %d characters allowed.\n", size - 1);
+        if (length == 0) {
+            printf("This cannot be left empty.\n");
+        } else if (length >= (size_t)size) {
+            printf("Please use fewer characters.\n");
         } else {
-            strcpy(dest, buffer + start);
-            return;
+            strcpy(answer, start);
+            return 1;
         }
     }
 }
 
-/* Reads a whole number; repeats until the input is a valid integer. */
 static int readInt(const char *prompt)
 {
-    char  buffer[INPUT_LEN];
-    char *end;
-    long  value;
+    char line[64];
+    char extra;
+    int number;
+    int result;
+
+    result = readLine(prompt, line, sizeof(line));
+    if (result == 0) return -2;
+    if (result < 0 || sscanf(line, "%d %c", &number, &extra) != 1) {
+        printf("Enter a whole number.\n");
+        return -1;
+    }
+    return number;
+}
+
+static int readValue(const char *prompt, double *value)
+{
+    char line[128];
+    char extra;
+    double number;
+    int result;
 
     while (1) {
-        readLine(prompt, buffer, INPUT_LEN);
-        if (inputEnded) {
-            return INT_MIN;
-        }
-        if (lineTooLong) {
-            continue;
-        }
-        errno = 0;
-        value = strtol(buffer, &end, 10);
-
-        if (end == buffer || errno == ERANGE ||
-            value < INT_MIN || value > INT_MAX) {
-            printf("  Error: please enter a valid whole number.\n");
-            continue;
-        }
-        while (*end == ' ' || *end == '\t') {
-            end++;
-        }
-        if (*end != '\0') {
-            printf("  Error: please enter a valid whole number.\n");
-            continue;
-        }
-        return (int)value;
-    }
-}
-
-/* Reads a decimal number greater than 0. */
-static double readPositiveDouble(const char *prompt)
-{
-    char   buffer[INPUT_LEN];
-    char  *end;
-    double value;
-
-    while (1) {
-        readLine(prompt, buffer, INPUT_LEN);
-        if (inputEnded) {
-            return 0.0;
-        }
-        if (lineTooLong) {
-            continue;
-        }
-        errno = 0;
-        value = strtod(buffer, &end);
-
-        if (end == buffer || errno == ERANGE || !isfinite(value)) {
-            printf("  Error: please enter a valid number.\n");
-            continue;
-        }
-        while (*end == ' ' || *end == '\t') {
-            end++;
-        }
-        if (*end != '\0') {
-            printf("  Error: please enter a valid number.\n");
-            continue;
-        }
-        if (value <= 0) {
-            printf("  Error: value must be greater than 0.\n");
-            continue;
-        }
-        return value;
-    }
-}
-
-/* =====================================================
- *  STRING HELPERS
- * ===================================================== */
-
-/* Copies src into dest in lowercase. */
-static void toLowerCase(const char *src, char *dest, int size)
-{
-    int i;
-    for (i = 0; src[i] != '\0' && i < size - 1; i++) {
-        dest[i] = (char)tolower((unsigned char)src[i]);
-    }
-    dest[i] = '\0';
-}
-
-/* Case-insensitive "text contains term" (partial match). */
-static int containsIgnoreCase(const char *text, const char *term)
-{
-    char lowText[NAME_LEN];
-    char lowTerm[INPUT_LEN];
-
-    toLowerCase(text, lowText, NAME_LEN);
-    toLowerCase(term, lowTerm, INPUT_LEN);
-    return strstr(lowText, lowTerm) != NULL;
-}
-
-/* Case-insensitive exact match using strcmp. */
-static int equalsIgnoreCase(const char *a, const char *b)
-{
-    char lowA[INPUT_LEN];
-    char lowB[INPUT_LEN];
-
-    toLowerCase(a, lowA, INPUT_LEN);
-    toLowerCase(b, lowB, INPUT_LEN);
-    return strcmp(lowA, lowB) == 0;
-}
-
-/* =====================================================
- *  MENUS FOR TYPE AND CONDITION
- * ===================================================== */
-
-static void chooseType(char *dest)
-{
-    int choice;
-
-    printf("  Asset type:\n");
-    printf("    1. Vehicle\n");
-    printf("    2. Computer\n");
-    printf("    3. Building\n");
-    printf("    4. Equipment\n");
-    printf("    5. Office Furniture\n");
-    printf("    6. Other\n");
-
-    while (1) {
-        choice = readInt("  Select type (1-6): ");
-        if (inputEnded) {
-            return;
-        }
-        switch (choice) {
-            case 1: strcpy(dest, "Vehicle");          return;
-            case 2: strcpy(dest, "Computer");         return;
-            case 3: strcpy(dest, "Building");         return;
-            case 4: strcpy(dest, "Equipment");        return;
-            case 5: strcpy(dest, "Office Furniture"); return;
-            case 6: strcpy(dest, "Other");            return;
-            default:
-                printf("  Error: choose a number from 1 to 6.\n");
+        result = readLine(prompt, line, sizeof(line));
+        if (result == 0) return 0;
+        if (result < 0) continue;
+        if (sscanf(line, "%lf %c", &number, &extra) != 1 ||
+            !isfinite(number) || number <= 0) {
+            printf("Enter a number greater than zero.\n");
+        } else {
+            *value = number;
+            return 1;
         }
     }
 }
 
-static void chooseCondition(char *dest)
+static int sameText(const char *first, const char *second)
 {
-    int choice;
-
-    printf("  Condition:\n");
-    printf("    1. Good\n");
-    printf("    2. Fair\n");
-    printf("    3. Poor\n");
-
-    while (1) {
-        choice = readInt("  Select condition (1-3): ");
-        if (inputEnded) {
-            return;
+    while (*first && *second) {
+        if (tolower((unsigned char)*first) != tolower((unsigned char)*second)) {
+            return 0;
         }
-        switch (choice) {
-            case 1: strcpy(dest, "Good"); return;
-            case 2: strcpy(dest, "Fair"); return;
-            case 3: strcpy(dest, "Poor"); return;
-            default:
-                printf("  Error: choose a number from 1 to 3.\n");
-        }
+        first++;
+        second++;
     }
+    return *first == '\0' && *second == '\0';
 }
 
-/* =====================================================
- *  DISPLAY HELPERS
- * ===================================================== */
-
-static void printAssetHeader(void)
+static int containsText(const char *text, const char *search)
 {
-    printf("\n%-6s %-22s %-17s %-14s %-18s %-10s\n",
-           "ID", "Name", "Type", "Value (N$)", "Department", "Condition");
-    printf("--------------------------------------------------------------------------------------\n");
+    int i, j;
+
+    for (i = 0; text[i] != '\0'; i++) {
+        for (j = 0; search[j] != '\0'; j++) {
+            if (text[i + j] == '\0' ||
+                tolower((unsigned char)text[i + j]) !=
+                tolower((unsigned char)search[j])) {
+                break;
+            }
+        }
+        if (search[j] == '\0') return 1;
+    }
+    return search[0] == '\0';
 }
 
-static void printAssetRow(int i)
-{
-    printf("%-6d %-22.22s %-17.17s %-14.2f %-18.18s %-10s\n",
-           assetId[i], assetName[i], assetType[i],
-           assetValue[i], assetDept[i], assetCondition[i]);
-}
-
-/* =====================================================
- *  CORE FUNCTIONS
- * ===================================================== */
-
-/* Returns the index of the asset with this ID, or -1 if not found. */
 int findAssetById(int id)
 {
     int i;
     for (i = 0; i < assetCount; i++) {
-        if (assetId[i] == id) {
-            return i;
-        }
+        if (assetIds[i] == id) return i;
     }
     return -1;
 }
@@ -311,217 +155,185 @@ int getAssetCount(void)
 
 double getTotalAssetValue(void)
 {
-    double total = 0.0;
+    double total = 0;
     int i;
-    for (i = 0; i < assetCount; i++) {
-        total += assetValue[i];
-    }
+
+    for (i = 0; i < assetCount; i++) total += assetValues[i];
     return total;
+}
+
+static int chooseFromList(const char *title, const char *options[],
+                          int optionCount, char *answer)
+{
+    int choice;
+    int i;
+
+    printf("%s\n", title);
+    for (i = 0; i < optionCount; i++) {
+        printf("%d. %s\n", i + 1, options[i]);
+    }
+
+    while (1) {
+        choice = readInt("Choose: ");
+        if (choice == -2) return 0;
+        if (choice >= 1 && choice <= optionCount) {
+            strcpy(answer, options[choice - 1]);
+            return 1;
+        }
+        printf("Choose a number from 1 to %d.\n", optionCount);
+    }
 }
 
 void addAsset(void)
 {
+    static const char *types[] = {
+        "Vehicle", "Computer", "Building", "Equipment", "Office Furniture", "Other"
+    };
+    static const char *conditions[] = {"Good", "Fair", "Poor"};
     int id;
 
-    printf("\n--- ADD ASSET ---\n");
-
-    if (assetCount >= MAX_ASSETS) {
-        printf("Error: the asset register is full (%d assets).\n", MAX_ASSETS);
+    if (assetCount == MAX_ASSETS) {
+        printf("The asset list is full.\n");
         return;
     }
 
-    /* Asset ID: positive and unique */
     while (1) {
         id = readInt("Asset ID: ");
-        if (inputEnded) {
-            return;
-        }
+        if (id == -2) return;
         if (id <= 0) {
-            printf("  Error: ID must be a positive number.\n");
-        } else if (findAssetById(id) != -1) {
-            printf("  Error: an asset with ID %d already exists.\n", id);
+            printf("ID must be greater than zero.\n");
+        } else if (findAssetById(id) >= 0) {
+            printf("That ID is already in use.\n");
         } else {
             break;
         }
     }
 
-    assetId[assetCount] = id;
-    readText("Asset name: ", assetName[assetCount], NAME_LEN);
-    if (inputEnded) return;
-    chooseType(assetType[assetCount]);
-    if (inputEnded) return;
-    assetValue[assetCount] = readPositiveDouble("Purchase value (N$): ");
-    if (inputEnded) return;
-    readText("Department: ", assetDept[assetCount], NAME_LEN);
-    if (inputEnded) return;
-    chooseCondition(assetCondition[assetCount]);
-    if (inputEnded) return;
+    assetIds[assetCount] = id;
+    if (!readText("Asset name: ", assetNames[assetCount], TEXT_SIZE)) return;
+    if (!chooseFromList("Asset type:", types, 6, assetTypes[assetCount])) return;
+    if (!readValue("Purchase value (N$): ", &assetValues[assetCount])) return;
+    if (!readText("Department: ", assetDepartments[assetCount], TEXT_SIZE)) return;
+    if (!chooseFromList("Condition:", conditions, 3,
+                        assetConditions[assetCount])) return;
 
     assetCount++;
-    printf("\nAsset added successfully.\n");
+    printf("Asset added.\n");
+}
+
+static void printAssetHeading(void)
+{
+    printf("\n%-6s %-22s %-17s %-14s %-18s %-10s\n",
+           "ID", "Name", "Type", "Value (N$)", "Department", "Condition");
+}
+
+static void printAsset(int i)
+{
+    printf("%-6d %-22.22s %-17.17s %-14.2f %-18.18s %-10s\n",
+           assetIds[i], assetNames[i], assetTypes[i], assetValues[i],
+           assetDepartments[i], assetConditions[i]);
 }
 
 void displayAssets(void)
 {
     int i;
 
-    printf("\n--- ASSET REGISTER ---\n");
-
     if (assetCount == 0) {
-        printf("No assets have been registered yet.\n");
+        printf("No assets have been added.\n");
         return;
     }
 
-    printAssetHeader();
-    for (i = 0; i < assetCount; i++) {
-        printAssetRow(i);
-    }
-    printf("\nTotal assets: %d\n", assetCount);
+    printAssetHeading();
+    for (i = 0; i < assetCount; i++) printAsset(i);
 }
 
 void searchAsset(void)
 {
-    int  choice;
-    int  i;
-    int  id;
-    int  found = 0;
-    char term[INPUT_LEN];
-
-    printf("\n--- SEARCH ASSET ---\n");
-    printf("1. Search by Asset ID\n");
-    printf("2. Search by Name (partial match allowed)\n");
-    printf("3. Search by Type\n");
-    printf("4. Search by Department\n");
-
-    choice = readInt("Enter choice: ");
-    if (inputEnded) return;
-
-    switch (choice) {
-        case 1:
-            id = readInt("Enter Asset ID: ");
-            i = findAssetById(id);
-            if (i != -1) {
-                printAssetHeader();
-                printAssetRow(i);
-                found = 1;
-            }
-            break;
-
-        case 2:
-            readText("Enter name to search: ", term, INPUT_LEN);
-            if (inputEnded) return;
-            for (i = 0; i < assetCount; i++) {
-                if (containsIgnoreCase(assetName[i], term)) {
-                    if (!found) {
-                        printAssetHeader();
-                    }
-                    printAssetRow(i);
-                    found++;
-                }
-            }
-            break;
-
-        case 3:
-            readText("Enter type to search: ", term, INPUT_LEN);
-            if (inputEnded) return;
-            for (i = 0; i < assetCount; i++) {
-                if (equalsIgnoreCase(assetType[i], term)) {
-                    if (!found) {
-                        printAssetHeader();
-                    }
-                    printAssetRow(i);
-                    found++;
-                }
-            }
-            break;
-
-        case 4:
-            readText("Enter department to search: ", term, INPUT_LEN);
-            if (inputEnded) return;
-            for (i = 0; i < assetCount; i++) {
-                if (equalsIgnoreCase(assetDept[i], term)) {
-                    if (!found) {
-                        printAssetHeader();
-                    }
-                    printAssetRow(i);
-                    found++;
-                }
-            }
-            break;
-
-        default:
-            printf("Invalid search option.\n");
-            return;
-    }
-
-    if (!found) {
-        printf("No matching assets found.\n");
-    } else {
-        printf("\nMatches found: %d\n", found);
-    }
-}
-
-/* Used by the Reports module (Student 5). */
-void displayAssetReport(void)
-{
-    int i;
-    int good = 0, fair = 0, poor = 0;
-
-    printf("\n========================================\n");
-    printf("              ASSET REPORT\n");
-    printf("========================================\n");
+    char search[128];
+    int choice, id, i, found = 0;
 
     if (assetCount == 0) {
-        printf("No assets have been registered yet.\n");
+        printf("No assets have been added.\n");
         return;
     }
 
-    printAssetHeader();
-    for (i = 0; i < assetCount; i++) {
-        printAssetRow(i);
+    printf("\n1. Search by ID\n2. Search by name\n");
+    printf("3. Search by type\n4. Search by department\n");
+    choice = readInt("Choose: ");
+    if (choice == -2) return;
 
-        if (strcmp(assetCondition[i], "Good") == 0) {
-            good++;
-        } else if (strcmp(assetCondition[i], "Fair") == 0) {
-            fair++;
-        } else {
-            poor++;
+    if (choice == 1) {
+        id = readInt("Asset ID: ");
+        if (id == -2) return;
+        i = findAssetById(id);
+        if (i >= 0) {
+            printAssetHeading();
+            printAsset(i);
+            return;
         }
+    } else if (choice >= 2 && choice <= 4) {
+        const char *prompt = choice == 2 ? "Name: " :
+                             choice == 3 ? "Type: " : "Department: ";
+        if (!readText(prompt, search, sizeof(search))) return;
+
+        for (i = 0; i < assetCount; i++) {
+            const char *field = choice == 2 ? assetNames[i] :
+                                choice == 3 ? assetTypes[i] : assetDepartments[i];
+            int matches = choice == 2 ? containsText(field, search) :
+                                        sameText(field, search);
+            if (matches) {
+                if (found == 0) printAssetHeading();
+                printAsset(i);
+                found++;
+            }
+        }
+        if (found > 0) return;
+    } else {
+        printf("Invalid choice.\n");
+        return;
     }
 
-    printf("\nTotal Assets      : %d\n", assetCount);
-    printf("Total Asset Value : N$%.2f\n", getTotalAssetValue());
-    printf("Good: %d | Fair: %d | Poor: %d\n", good, fair, poor);
-    if (poor > 0) {
-        printf("Note: %d asset(s) in poor condition may need attention.\n", poor);
-    }
+    printf("No matching asset found.\n");
 }
 
-/* Sub-menu for asset management. Called from the main menu. */
+void displayAssetReport(void)
+{
+    int i, good = 0, fair = 0, poor = 0;
+
+    printf("\n--- Asset Report ---\n");
+    if (assetCount == 0) {
+        printf("No assets have been added.\n");
+        return;
+    }
+
+    displayAssets();
+    for (i = 0; i < assetCount; i++) {
+        if (strcmp(assetConditions[i], "Good") == 0) good++;
+        else if (strcmp(assetConditions[i], "Fair") == 0) fair++;
+        else poor++;
+    }
+
+    printf("\nNumber of assets: %d\n", assetCount);
+    printf("Total value: N$%.2f\n", getTotalAssetValue());
+    printf("Good: %d, Fair: %d, Poor: %d\n", good, fair, poor);
+}
+
 void assetMenu(void)
 {
     int choice;
 
     do {
-        printf("\n========================================\n");
-        printf("            ASSET MANAGEMENT\n");
-        printf("========================================\n");
-        printf("1. Add Asset\n");
-        printf("2. Display All Assets\n");
-        printf("3. Search Asset\n");
-        printf("4. Back to Main Menu\n");
-
-        choice = readInt("Enter your choice: ");
-        if (inputEnded) return;
+        printf("\n--- Asset Management ---\n");
+        printf("1. Add asset\n2. Display assets\n3. Search assets\n4. Back\n");
+        choice = readInt("Choose: ");
+        if (choice == -2) return;
 
         switch (choice) {
-            case 1: addAsset();      break;
+            case 1: addAsset(); break;
             case 2: displayAssets(); break;
-            case 3: searchAsset();   break;
-            case 4: printf("Returning to main menu...\n"); break;
-            default:
-                printf("Invalid choice. Please enter 1-4.\n");
+            case 3: searchAsset(); break;
+            case 4: break;
+            default: printf("Invalid choice.\n");
         }
     } while (choice != 4);
 }
-
