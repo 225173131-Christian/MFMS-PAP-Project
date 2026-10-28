@@ -2,6 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <errno.h>
+#include <limits.h>
+#include <math.h>
 #include "employees.h"
 
 /* Parallel arrays: index i in every array belongs to the same employee */
@@ -16,14 +19,29 @@ static int    empCount = 0;
 
 /* ---------- input helpers (validation) ---------- */
 
-static void readLine(const char *prompt, char *buf, int size)
+static int readLine(const char *prompt, char *buf, int size)
 {
+    size_t length;
+    int ch;
+
     printf("%s", prompt);
     if (fgets(buf, size, stdin) == NULL) {
         buf[0] = '\0';
-        return;
+        return 0;
     }
-    buf[strcspn(buf, "\n")] = '\0';
+    length = strlen(buf);
+    if (length > 0 && buf[length - 1] == '\n') {
+        buf[length - 1] = '\0';
+        return 1;
+    }
+    if (!feof(stdin)) {
+        while ((ch = getchar()) != '\n' && ch != EOF) {
+            /* discard the rest of the overlong line */
+        }
+        printf("  Error: input is too long; please try again.\n");
+        return -1;
+    }
+    return 1;
 }
 
 static int isBlank(const char *s)
@@ -35,25 +53,59 @@ static int isBlank(const char *s)
     return 1;
 }
 
-static void readNonEmpty(const char *prompt, char *buf, int size)
+static int readNonEmpty(const char *prompt, char *buf, int size)
 {
-    do {
-        readLine(prompt, buf, size);
-        if (isBlank(buf)) printf("  Error: this field cannot be empty.\n");
-    } while (isBlank(buf));
+    int status;
+    char *start;
+    size_t length;
+
+    for (;;) {
+        status = readLine(prompt, buf, size);
+        if (status == 0) {
+            return 0;
+        }
+        if (status < 0) {
+            continue;
+        }
+        if (isBlank(buf)) {
+            printf("  Error: this field cannot be empty.\n");
+            continue;
+        }
+
+        start = buf;
+        while (isspace((unsigned char)*start)) {
+            start++;
+        }
+        length = strlen(start);
+        while (length > 0 && isspace((unsigned char)start[length - 1])) {
+            start[--length] = '\0';
+        }
+        if (start != buf) {
+            memmove(buf, start, length + 1);
+        }
+        return 1;
+    }
 }
 
 /* Keeps asking until the user enters a number that is >= 0 */
-static double readMoney(const char *prompt)
+static int readMoney(const char *prompt, double *amount)
 {
     char tmp[64];
     char *end;
     double value;
+    int status;
 
     while (1) {
-        readLine(prompt, tmp, sizeof(tmp));
+        status = readLine(prompt, tmp, sizeof(tmp));
+        if (status == 0) {
+            return 0;
+        }
+        if (status < 0) {
+            continue;
+        }
+        errno = 0;
         value = strtod(tmp, &end);
-        if (end == tmp) {
+        if (end == tmp || errno == ERANGE || !isfinite(value)) {
             printf("  Error: please enter a number.\n");
             continue;
         }
@@ -63,7 +115,8 @@ static double readMoney(const char *prompt)
         } else if (value < 0) {
             printf("  Error: amount cannot be negative.\n");
         } else {
-            return value;
+            *amount = value;
+            return 1;
         }
     }
 }
@@ -73,10 +126,16 @@ static int readChoice(const char *prompt)
     char tmp[32];
     char *end;
     long v;
+    int status;
 
-    readLine(prompt, tmp, sizeof(tmp));
+    status = readLine(prompt, tmp, sizeof(tmp));
+    if (status == 0) return -2;
+    if (status < 0) return -1;
+    errno = 0;
     v = strtol(tmp, &end, 10);
-    if (end == tmp || *end != '\0') return -1;
+    if (end == tmp || errno == ERANGE || v < INT_MIN || v > INT_MAX) return -1;
+    while (isspace((unsigned char)*end)) end++;
+    if (*end != '\0') return -1;
     return (int)v;
 }
 
@@ -139,6 +198,7 @@ static void printSalaryDetails(int i)
 void addEmployee(void)
 {
     char id[MAX_ID], name[MAX_NAME], dept[MAX_DEPT];
+    double basic, housing, transport, other;
 
     if (empCount >= MAX_EMPLOYEES) {
         printf("Employee list is full (%d).\n", MAX_EMPLOYEES);
@@ -147,20 +207,24 @@ void addEmployee(void)
 
     printf("\n--- Add Employee ---\n");
     do {
-        readNonEmpty("Employee ID: ", id, sizeof(id));
+        if (!readNonEmpty("Employee ID: ", id, sizeof(id))) return;
         if (findById(id) != -1) printf("  Error: that ID already exists.\n");
     } while (findById(id) != -1);
 
-    readNonEmpty("Full name: ", name, sizeof(name));
-    readNonEmpty("Department: ", dept, sizeof(dept));
+    if (!readNonEmpty("Full name: ", name, sizeof(name))) return;
+    if (!readNonEmpty("Department: ", dept, sizeof(dept))) return;
+    if (!readMoney("Basic salary (N$): ", &basic)) return;
+    if (!readMoney("Housing allowance (N$): ", &housing)) return;
+    if (!readMoney("Transport allowance (N$): ", &transport)) return;
+    if (!readMoney("Other allowances (N$): ", &other)) return;
 
     strcpy(empId[empCount], id);
     strcpy(empName[empCount], name);
     strcpy(empDept[empCount], dept);
-    empBasic[empCount]     = readMoney("Basic salary (N$): ");
-    empHousing[empCount]   = readMoney("Housing allowance (N$): ");
-    empTransport[empCount] = readMoney("Transport allowance (N$): ");
-    empOther[empCount]     = readMoney("Other allowances (N$): ");
+    empBasic[empCount]     = basic;
+    empHousing[empCount]   = housing;
+    empTransport[empCount] = transport;
+    empOther[empCount]     = other;
     empCount++;
 
     printf("Employee added successfully.\n");
@@ -194,14 +258,15 @@ void searchEmployee(void)
 
     printf("\n--- Search Employee ---\n1. By ID\n2. By name (partial match)\n");
     choice = readChoice("Choice: ");
+    if (choice == -2) return;
 
     if (choice == 1) {
-        readNonEmpty("Enter ID: ", input, sizeof(input));
+        if (!readNonEmpty("Enter ID: ", input, sizeof(input))) return;
         i = findById(input);
         if (i == -1) printf("No employee with ID %s.\n", input);
         else printSalaryDetails(i);
     } else if (choice == 2) {
-        readNonEmpty("Enter name or part of name: ", input, sizeof(input));
+        if (!readNonEmpty("Enter name or part of name: ", input, sizeof(input))) return;
         toLowerCopy(input, lowerInput);
         for (i = 0; i < empCount; i++) {
             toLowerCopy(empName[i], lowerName);
@@ -225,7 +290,7 @@ void salaryInformation(void)
         printf("\nNo employees registered yet.\n");
         return;
     }
-    readNonEmpty("Enter employee ID: ", id, sizeof(id));
+    if (!readNonEmpty("Enter employee ID: ", id, sizeof(id))) return;
     i = findById(id);
     if (i == -1) printf("No employee with ID %s.\n", id);
     else printSalaryDetails(i);
@@ -277,6 +342,7 @@ void employeeMenu(void)
         printf("1. Add employee\n2. Display employees\n3. Search employee\n");
         printf("4. Calculate salary information\n5. Back to main menu\n");
         choice = readChoice("Enter your choice: ");
+        if (choice == -2) return;
 
         switch (choice) {
             case 1: addEmployee();       break;
@@ -288,5 +354,4 @@ void employeeMenu(void)
         }
     } while (choice != 5);
 }
-
 
