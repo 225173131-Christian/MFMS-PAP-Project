@@ -10,9 +10,11 @@
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <errno.h>
+#include <limits.h>
+#include <math.h>
 #include "assets.h"
 
-#define MAX_ASSETS 100
 #define NAME_LEN   50
 #define INPUT_LEN  100
 
@@ -24,6 +26,8 @@ static double assetValue[MAX_ASSETS];
 static char   assetDept[MAX_ASSETS][NAME_LEN];
 static char   assetCondition[MAX_ASSETS][NAME_LEN];
 static int    assetCount = 0;
+static int    inputEnded = 0;
+static int    lineTooLong = 0;
 
 /* ---------- Private helper prototypes ---------- */
 static void   readLine(const char *prompt, char *buffer, int size);
@@ -48,20 +52,24 @@ static void readLine(const char *prompt, char *buffer, int size)
     int len;
     int ch;
 
+    lineTooLong = 0;
     printf("%s", prompt);
     if (fgets(buffer, size, stdin) == NULL) {
         buffer[0] = '\0';
+        inputEnded = 1;
         return;
     }
 
     len = (int)strlen(buffer);
     if (len > 0 && buffer[len - 1] == '\n') {
         buffer[len - 1] = '\0';
-    } else {
+    } else if (!feof(stdin)) {
         /* line was longer than the buffer: discard the leftovers */
         while ((ch = getchar()) != '\n' && ch != EOF) {
             /* discard */
         }
+        lineTooLong = 1;
+        printf("  Error: input is too long; please try again.\n");
     }
 }
 
@@ -73,6 +81,12 @@ static void readText(const char *prompt, char *dest, int size)
 
     while (1) {
         readLine(prompt, buffer, INPUT_LEN);
+        if (inputEnded) {
+            return;
+        }
+        if (lineTooLong) {
+            continue;
+        }
 
         /* skip leading spaces */
         start = 0;
@@ -100,9 +114,17 @@ static int readInt(const char *prompt)
 
     while (1) {
         readLine(prompt, buffer, INPUT_LEN);
+        if (inputEnded) {
+            return INT_MIN;
+        }
+        if (lineTooLong) {
+            continue;
+        }
+        errno = 0;
         value = strtol(buffer, &end, 10);
 
-        if (end == buffer) {
+        if (end == buffer || errno == ERANGE ||
+            value < INT_MIN || value > INT_MAX) {
             printf("  Error: please enter a valid whole number.\n");
             continue;
         }
@@ -126,9 +148,16 @@ static double readPositiveDouble(const char *prompt)
 
     while (1) {
         readLine(prompt, buffer, INPUT_LEN);
+        if (inputEnded) {
+            return 0.0;
+        }
+        if (lineTooLong) {
+            continue;
+        }
+        errno = 0;
         value = strtod(buffer, &end);
 
-        if (end == buffer) {
+        if (end == buffer || errno == ERANGE || !isfinite(value)) {
             printf("  Error: please enter a valid number.\n");
             continue;
         }
@@ -201,6 +230,9 @@ static void chooseType(char *dest)
 
     while (1) {
         choice = readInt("  Select type (1-6): ");
+        if (inputEnded) {
+            return;
+        }
         switch (choice) {
             case 1: strcpy(dest, "Vehicle");          return;
             case 2: strcpy(dest, "Computer");         return;
@@ -225,6 +257,9 @@ static void chooseCondition(char *dest)
 
     while (1) {
         choice = readInt("  Select condition (1-3): ");
+        if (inputEnded) {
+            return;
+        }
         switch (choice) {
             case 1: strcpy(dest, "Good"); return;
             case 2: strcpy(dest, "Fair"); return;
@@ -298,6 +333,9 @@ void addAsset(void)
     /* Asset ID: positive and unique */
     while (1) {
         id = readInt("Asset ID: ");
+        if (inputEnded) {
+            return;
+        }
         if (id <= 0) {
             printf("  Error: ID must be a positive number.\n");
         } else if (findAssetById(id) != -1) {
@@ -309,10 +347,15 @@ void addAsset(void)
 
     assetId[assetCount] = id;
     readText("Asset name: ", assetName[assetCount], NAME_LEN);
+    if (inputEnded) return;
     chooseType(assetType[assetCount]);
+    if (inputEnded) return;
     assetValue[assetCount] = readPositiveDouble("Purchase value (N$): ");
+    if (inputEnded) return;
     readText("Department: ", assetDept[assetCount], NAME_LEN);
+    if (inputEnded) return;
     chooseCondition(assetCondition[assetCount]);
+    if (inputEnded) return;
 
     assetCount++;
     printf("\nAsset added successfully.\n");
@@ -351,6 +394,7 @@ void searchAsset(void)
     printf("4. Search by Department\n");
 
     choice = readInt("Enter choice: ");
+    if (inputEnded) return;
 
     switch (choice) {
         case 1:
@@ -365,6 +409,7 @@ void searchAsset(void)
 
         case 2:
             readText("Enter name to search: ", term, INPUT_LEN);
+            if (inputEnded) return;
             for (i = 0; i < assetCount; i++) {
                 if (containsIgnoreCase(assetName[i], term)) {
                     if (!found) {
@@ -378,6 +423,7 @@ void searchAsset(void)
 
         case 3:
             readText("Enter type to search: ", term, INPUT_LEN);
+            if (inputEnded) return;
             for (i = 0; i < assetCount; i++) {
                 if (equalsIgnoreCase(assetType[i], term)) {
                     if (!found) {
@@ -391,6 +437,7 @@ void searchAsset(void)
 
         case 4:
             readText("Enter department to search: ", term, INPUT_LEN);
+            if (inputEnded) return;
             for (i = 0; i < assetCount; i++) {
                 if (equalsIgnoreCase(assetDept[i], term)) {
                     if (!found) {
@@ -465,6 +512,7 @@ void assetMenu(void)
         printf("4. Back to Main Menu\n");
 
         choice = readInt("Enter your choice: ");
+        if (inputEnded) return;
 
         switch (choice) {
             case 1: addAsset();      break;
@@ -476,3 +524,4 @@ void assetMenu(void)
         }
     } while (choice != 4);
 }
+
