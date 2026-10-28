@@ -7,7 +7,7 @@
 void employeeReport(void);
 void budgetReport(void);
 void supplierReport(void);
-void assetReport(Asset assets[], int assetCount);
+void assetReport(void);
 void displayReportsMenu(void);
 
 #endif
